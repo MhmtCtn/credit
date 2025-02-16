@@ -3,22 +3,25 @@ package tr.com.xbank.credit.exception;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.NonNull;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 import tr.com.xbank.credit.dto.ApiResponse;
 
 import java.util.Collections;
 import java.util.List;
 
 @RestControllerAdvice
-public class GlobalExceptionHandler {
+public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(Exception.class)
-    public static ResponseEntity<ApiResponse<?>> handleGeneralException(Exception ex,
+    public static ResponseEntity<Object> handleGeneralException(Exception ex,
                                                                         HttpServletRequest request) {
         return errorResponseEntity(
                 Collections.singletonList(ex.getMessage()),
@@ -30,7 +33,7 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(ResourceNotFoundException.class)
-    public ResponseEntity<ApiResponse<?>> handleResourceNotFoundException(ResourceNotFoundException ex,
+    public ResponseEntity<Object> handleResourceNotFoundException(ResourceNotFoundException ex,
                                                                           HttpServletRequest request) {
         return errorResponseEntity(
                 Collections.singletonList(ex.getMessage()),
@@ -42,7 +45,7 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<ApiResponse<?>> handleIllegalArgumentException(IllegalArgumentException ex,
+    public ResponseEntity<Object> handleIllegalArgumentException(IllegalArgumentException ex,
                                                                          HttpServletRequest request) {
         return errorResponseEntity(
                 Collections.singletonList(ex.getMessage()),
@@ -53,11 +56,12 @@ public class GlobalExceptionHandler {
         );
     }
 
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    protected ResponseEntity<ApiResponse<?>> handleMethodArgumentNotValid(MethodArgumentNotValidException ex,
-                                                                          HttpHeaders headers,
-                                                                          HttpStatus status,
-                                                                          WebRequest request) {
+    @NonNull
+    @Override
+    protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex,
+                                                                  @NonNull HttpHeaders headers,
+                                                                  @NonNull HttpStatusCode status,
+                                                                  WebRequest request) {
         List<String> errors = ex.getBindingResult()
                 .getFieldErrors()
                 .stream()
@@ -68,12 +72,12 @@ public class GlobalExceptionHandler {
                 errors,
                 HttpStatus.BAD_REQUEST.value(),
                 "Validation failed",
-                request.getContextPath(),
+                request.getDescription(false).substring(4),
                 HttpStatus.BAD_REQUEST
         );
     }
 
-    public static ResponseEntity<ApiResponse<?>> errorResponseEntity(List<String> errors,
+    public static ResponseEntity<Object> errorResponseEntity(List<String> errors,
                                                                      int errorCode,
                                                                      String message,
                                                                      String path,

@@ -74,7 +74,7 @@ public class LoanServiceImpl implements LoanService {
 
         List<LoanInstallment> eligibleInstallments = findAndValidateEligibleInstallments(loan.getId());
 
-        PaymentResult result = processPayment(eligibleInstallments, request.amount());
+        PaymentResult result = processPayment(eligibleInstallments, request.amount(), loan.getId());
         updateLoanAndCustomerStatus(loan, result.isLoanFullyPaid());
 
         return result;
@@ -164,16 +164,14 @@ public class LoanServiceImpl implements LoanService {
         List<LoanInstallment> installments =
                 loanInstallmentRepository.findUnpaidInstallmentsByLoanIdAndMaxDueDate(loanId, maxDueDate);
 
-        if (installments.isEmpty()) {
-            throw new ResourceNotFoundException("Eligible installments not found");
+        if (installments == null || installments.isEmpty()) {
+            throw new ResourceNotFoundException("No eligible installments found for payment processing");
         }
 
         return installments;
     }
 
-    private PaymentResult processPayment(List<LoanInstallment> installments, BigDecimal paymentAmount) {
-        validateInstallments(installments);
-        Long loanId = installments.get(0).getLoan().getId();
+    private PaymentResult processPayment(List<LoanInstallment> installments, BigDecimal paymentAmount, Long loanId) {
 
         BigDecimal remainingAmount = paymentAmount;
         int installmentsPaid = 0;
@@ -181,13 +179,16 @@ public class LoanServiceImpl implements LoanService {
         List<LoanInstallment> updatedInstallments = new ArrayList<>();
 
         for (LoanInstallment installment : installments) {
-            if (remainingAmount.compareTo(installment.getAmount()) >= 0) {
 
-                updatePaidInstallment(installment);
+            BigDecimal adjustedAmount = calculateAdjustedAmount(installment);
+
+            if (remainingAmount.compareTo(adjustedAmount) >= 0) {
+
+                updatePaidInstallment(installment, adjustedAmount);
                 updatedInstallments.add(installment);
 
-                remainingAmount = remainingAmount.subtract(installment.getAmount());
-                amountSpent = amountSpent.add(installment.getAmount());
+                remainingAmount = remainingAmount.subtract(adjustedAmount);
+                amountSpent = amountSpent.add(adjustedAmount);
                 installmentsPaid++;
             } else {
                 break;
@@ -195,26 +196,36 @@ public class LoanServiceImpl implements LoanService {
         }
 
         validatePaymentProcessed(installmentsPaid);
+
         loanInstallmentRepository.saveAll(updatedInstallments);
         boolean isLoanFullyPaid = checkIfLoanFullyPaid(loanId);
 
         return new PaymentResult(installmentsPaid, amountSpent, isLoanFullyPaid);
     }
 
-    private void validateInstallments(List<LoanInstallment> installments) {
-        if (installments == null || installments.isEmpty()) {
-            throw new ResourceNotFoundException("No installments found for payment processing");
+    private BigDecimal calculateAdjustedAmount(LoanInstallment installment) {
+        LocalDate today = LocalDate.now();
+        LocalDate dueDate = installment.getDueDate();
+        long daysDifference = java.time.temporal.ChronoUnit.DAYS.between(today, dueDate);
+
+        BigDecimal baseAmount = installment.getAmount();
+        BigDecimal adjustmentRate = BigDecimal.valueOf(0.001);
+
+        if (daysDifference > 0) {
+            // Early payment discount
+            BigDecimal discount = baseAmount
+                    .multiply(adjustmentRate)
+                    .multiply(BigDecimal.valueOf(daysDifference));
+            return baseAmount.subtract(discount);
+        } else if (daysDifference < 0) {
+            // Late payment penalty
+            BigDecimal penalty = baseAmount
+                    .multiply(adjustmentRate)
+                    .multiply(BigDecimal.valueOf(Math.abs(daysDifference)));
+            return baseAmount.add(penalty);
         }
 
-        LoanInstallment firstInstallment = installments.get(0);
-        if (firstInstallment == null) {
-            throw new ResourceNotFoundException("Invalid installment data");
-        }
-
-        Loan loan = firstInstallment.getLoan();
-        if (loan == null) {
-            throw new ResourceNotFoundException("Loan not found for installment");
-        }
+        return baseAmount;
     }
 
     private void validatePaymentProcessed(int installmentsPaid) {
@@ -223,8 +234,8 @@ public class LoanServiceImpl implements LoanService {
         }
     }
 
-    private void updatePaidInstallment(LoanInstallment installment) {
-        installment.setPaidAmount(installment.getAmount());
+    private void updatePaidInstallment(LoanInstallment installment, BigDecimal adjustedAmount) {
+        installment.setPaidAmount(adjustedAmount);
         installment.setPaymentDate(LocalDate.now());
         installment.setPaid(true);
     }

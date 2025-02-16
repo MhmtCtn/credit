@@ -1,5 +1,6 @@
 package tr.com.xbank.credit.controller;
 
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,7 +22,7 @@ public class LoanController {
     private final LoanService loanService;
 
     @PostMapping("/create")
-    public ResponseEntity<ApiResponse<LoanDto>> createLoan(@RequestBody CreateLoanRequest request) {
+    public ResponseEntity<ApiResponse<LoanDto>> createLoan(@Valid @RequestBody CreateLoanRequest request) {
 
         try {
 
@@ -64,7 +65,7 @@ public class LoanController {
     }
 
     @PostMapping("/pay")
-    public ResponseEntity<ApiResponse<PaymentResult>> payLoanInstallments(@RequestBody PayLoanRequest request) {
+    public ResponseEntity<ApiResponse<PaymentResult>> payLoanInstallments(@Valid @RequestBody PayLoanRequest request) {
 
         try {
 
