@@ -3,6 +3,7 @@ package tr.com.xbank.credit.service.impl;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.CollectionUtils;
 import tr.com.xbank.credit.dto.request.CreateLoanRequest;
 import tr.com.xbank.credit.dto.request.PayLoanRequest;
 import tr.com.xbank.credit.dto.response.InstallmentDto;
@@ -51,19 +52,31 @@ public class LoanServiceImpl implements LoanService {
     @Override
     public List<LoanDto> getLoansByCustomerId(Long customerId) {
 
-        return loanRepository.findByCustomerId(customerId)
+        List<LoanDto> loans = loanRepository.findByCustomerId(customerId)
                 .stream()
                 .map(LoanDto::mapLoanToDto)
                 .toList();
+
+        if (CollectionUtils.isEmpty(loans)) {
+            throw new ResourceNotFoundException("Loan", "customerId", customerId);
+        }
+
+        return loans;
     }
 
     @Override
     public List<InstallmentDto> getLoanInstallments(Long loanId) {
 
-        return loanInstallmentRepository.findByLoanId(loanId)
+        List<InstallmentDto> installments = loanInstallmentRepository.findByLoanId(loanId)
                 .stream()
                 .map(InstallmentDto::mapInstallmentToDto)
                 .toList();
+
+        if (CollectionUtils.isEmpty(installments)) {
+            throw new ResourceNotFoundException("Installments", "loanId", loanId);
+        }
+
+        return installments;
     }
 
     @Override

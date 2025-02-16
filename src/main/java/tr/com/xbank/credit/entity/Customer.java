@@ -1,6 +1,8 @@
 package tr.com.xbank.credit.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.PositiveOrZero;
 import lombok.Data;
@@ -21,6 +23,19 @@ public class Customer {
 
     @NotEmpty(message = "Surname is required")
     private String surname;
+
+    @NotEmpty(message = "Username is required")
+    @Column(unique = true)
+    private String username;
+
+    @JsonIgnore
+    @NotEmpty(message = "Password is required")
+    private String password;
+
+    @NotEmpty(message = "Email is required")
+    @Email(message = "Email should be valid")
+    @Column(unique = true)
+    private String email;
 
     @PositiveOrZero(message = "Credit limit must be zero or positive")
     private BigDecimal creditLimit;
