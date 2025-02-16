@@ -29,6 +29,18 @@ public class GlobalExceptionHandler {
         );
     }
 
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ApiResponse<?>> handleResourceNotFoundException(ResourceNotFoundException ex,
+                                                                          HttpServletRequest request) {
+        return errorResponseEntity(
+                Collections.singletonList(ex.getMessage()),
+                HttpStatus.NOT_FOUND.value(),
+                "Resource not found",
+                request.getRequestURI(),
+                HttpStatus.NOT_FOUND
+        );
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponse<?>> handleIllegalArgumentException(IllegalArgumentException ex,
                                                                          HttpServletRequest request) {

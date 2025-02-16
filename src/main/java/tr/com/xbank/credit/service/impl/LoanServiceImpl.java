@@ -11,6 +11,7 @@ import tr.com.xbank.credit.dto.response.PaymentResult;
 import tr.com.xbank.credit.entity.Customer;
 import tr.com.xbank.credit.entity.Loan;
 import tr.com.xbank.credit.entity.LoanInstallment;
+import tr.com.xbank.credit.exception.ResourceNotFoundException;
 import tr.com.xbank.credit.repository.CustomerRepository;
 import tr.com.xbank.credit.repository.LoanInstallmentRepository;
 import tr.com.xbank.credit.repository.LoanRepository;
@@ -34,46 +35,15 @@ public class LoanServiceImpl implements LoanService {
     @Transactional
     public LoanDto createLoan(CreateLoanRequest request) {
 
-        Customer customer = customerRepository.findById(request.customerId())
-                .orElseThrow(() -> new IllegalArgumentException("Customer not found"));
+        Customer customer = findAndValidateCustomer(request.customerId());
+        BigDecimal totalAmount = calculateTotalLoanAmount(request.amount(), request.interestRate());
+        validateCustomerCreditLimit(customer, totalAmount);
 
-        // Calculate total loan amount with interest
-        BigDecimal totalAmount = request.amount().multiply(BigDecimal.ONE.add(request.interestRate()));
+        Loan loan = createAndSaveLoan(customer, request);
 
-        // Check if customer has enough credit limit
-        if (customer.getCreditLimit().subtract(customer.getUsedCreditLimit()).compareTo(totalAmount) < 0) {
-            throw new IllegalArgumentException("Insufficient credit limit");
-        }
+        createAndSaveInstallments(loan, totalAmount, request.numberOfInstallments());
 
-        Loan loan = new Loan();
-        loan.setCustomer(customer);
-        loan.setLoanAmount(request.amount());
-        loan.setInterestRate(request.interestRate());
-        loan.setNumberOfInstallment(request.numberOfInstallments());
-
-        loan = loanRepository.save(loan);
-
-        // Calculate installment amount
-        BigDecimal installmentAmount =
-                totalAmount.divide(
-                        BigDecimal.valueOf(request.numberOfInstallments()), 2, RoundingMode.HALF_UP);
-
-        List<LoanInstallment> installments = new ArrayList<>();
-        LocalDate firstDueDate = LocalDate.now().withDayOfMonth(1).plusMonths(1);
-
-        for (int i = 0; i < request.numberOfInstallments(); i++) {
-            LoanInstallment installment = new LoanInstallment();
-            installment.setLoan(loan);
-            installment.setAmount(installmentAmount);
-            installment.setDueDate(firstDueDate.plusMonths(i));
-            installments.add(installment);
-        }
-
-        loanInstallmentRepository.saveAll(installments);
-
-        // Update customer's used credit limit
-        customer.setUsedCreditLimit(customer.getUsedCreditLimit().add(totalAmount));
-        customerRepository.save(customer);
+        updateCustomerCreditLimit(customer, totalAmount);
 
         return LoanDto.mapLoanToDto(loan);
     }
@@ -97,7 +67,180 @@ public class LoanServiceImpl implements LoanService {
     }
 
     @Override
+    @Transactional
     public PaymentResult payLoanInstallments(PayLoanRequest request) {
-        return null;
+
+        Loan loan = findAndValidateLoan(request.loanId());
+
+        List<LoanInstallment> eligibleInstallments = findAndValidateEligibleInstallments(loan.getId());
+
+        PaymentResult result = processPayment(eligibleInstallments, request.amount());
+        updateLoanAndCustomerStatus(loan, result.isLoanFullyPaid());
+
+        return result;
+    }
+
+
+    /***
+     *  Private methods for createLoan method
+    ***/
+    private Customer findAndValidateCustomer(Long customerId) {
+        return customerRepository.findById(customerId)
+                .orElseThrow(() -> new ResourceNotFoundException("Customer", "id", customerId));
+    }
+
+    private BigDecimal calculateTotalLoanAmount(BigDecimal principal, BigDecimal interestRate) {
+        return principal.multiply(BigDecimal.ONE.add(interestRate));
+    }
+
+    private void validateCustomerCreditLimit(Customer customer, BigDecimal requiredAmount) {
+        BigDecimal availableCredit = customer.getCreditLimit().subtract(customer.getUsedCreditLimit());
+        if (availableCredit.compareTo(requiredAmount) < 0) {
+            throw new IllegalArgumentException("Insufficient credit limit");
+        }
+    }
+
+    private Loan createAndSaveLoan(Customer customer, CreateLoanRequest request) {
+        Loan loan = new Loan();
+        loan.setCustomer(customer);
+        loan.setLoanAmount(request.amount());
+        loan.setInterestRate(request.interestRate());
+        loan.setNumberOfInstallment(request.numberOfInstallments());
+        return loanRepository.save(loan);
+    }
+
+    private void createAndSaveInstallments(Loan loan, BigDecimal totalAmount, int numberOfInstallments) {
+        BigDecimal installmentAmount = calculateInstallmentAmount(totalAmount, numberOfInstallments);
+        List<LoanInstallment> installments = generateInstallments(loan, installmentAmount, numberOfInstallments);
+        loanInstallmentRepository.saveAll(installments);
+    }
+
+    private BigDecimal calculateInstallmentAmount(BigDecimal totalAmount, int numberOfInstallments) {
+        return totalAmount.divide(BigDecimal.valueOf(numberOfInstallments), 2, RoundingMode.HALF_UP);
+    }
+
+    private List<LoanInstallment> generateInstallments(Loan loan, BigDecimal installmentAmount, int numberOfInstallments) {
+        List<LoanInstallment> installments = new ArrayList<>();
+        LocalDate firstDueDate = LocalDate.now().withDayOfMonth(1).plusMonths(1);
+
+        for (int i = 0; i < numberOfInstallments; i++) {
+            installments.add(createInstallment(loan, installmentAmount, firstDueDate.plusMonths(i)));
+        }
+        return installments;
+    }
+
+    private LoanInstallment createInstallment(Loan loan, BigDecimal amount, LocalDate dueDate) {
+        LoanInstallment installment = new LoanInstallment();
+        installment.setLoan(loan);
+        installment.setAmount(amount);
+        installment.setDueDate(dueDate);
+        return installment;
+    }
+
+    private void updateCustomerCreditLimit(Customer customer, BigDecimal amount) {
+        customer.setUsedCreditLimit(customer.getUsedCreditLimit().add(amount));
+        customerRepository.save(customer);
+    }
+
+
+    /***
+     *  Private methods for payLoanInstallments method
+     ***/
+    private Loan findAndValidateLoan(Long loanId) {
+
+        Loan loan = loanRepository.findById(loanId)
+                .orElseThrow(() -> new ResourceNotFoundException("Loan", "id", loanId));
+
+        if (loan.isPaid()) {
+            throw new IllegalArgumentException("Loan is already fully paid");
+        }
+
+        return loan;
+    }
+
+    private List<LoanInstallment> findAndValidateEligibleInstallments(Long loanId) {
+
+        LocalDate maxDueDate = LocalDate.now().plusMonths(3);
+        List<LoanInstallment> installments =
+                loanInstallmentRepository.findUnpaidInstallmentsByLoanIdAndMaxDueDate(loanId, maxDueDate);
+
+        if (installments.isEmpty()) {
+            throw new ResourceNotFoundException("Eligible installments not found");
+        }
+
+        return installments;
+    }
+
+    private PaymentResult processPayment(List<LoanInstallment> installments, BigDecimal paymentAmount) {
+        validateInstallments(installments);
+        Long loanId = installments.get(0).getLoan().getId();
+
+        BigDecimal remainingAmount = paymentAmount;
+        int installmentsPaid = 0;
+        BigDecimal amountSpent = BigDecimal.ZERO;
+        List<LoanInstallment> updatedInstallments = new ArrayList<>();
+
+        for (LoanInstallment installment : installments) {
+            if (remainingAmount.compareTo(installment.getAmount()) >= 0) {
+
+                updatePaidInstallment(installment);
+                updatedInstallments.add(installment);
+
+                remainingAmount = remainingAmount.subtract(installment.getAmount());
+                amountSpent = amountSpent.add(installment.getAmount());
+                installmentsPaid++;
+            } else {
+                break;
+            }
+        }
+
+        validatePaymentProcessed(installmentsPaid);
+        loanInstallmentRepository.saveAll(updatedInstallments);
+        boolean isLoanFullyPaid = checkIfLoanFullyPaid(loanId);
+
+        return new PaymentResult(installmentsPaid, amountSpent, isLoanFullyPaid);
+    }
+
+    private void validateInstallments(List<LoanInstallment> installments) {
+        if (installments == null || installments.isEmpty()) {
+            throw new ResourceNotFoundException("No installments found for payment processing");
+        }
+
+        LoanInstallment firstInstallment = installments.get(0);
+        if (firstInstallment == null) {
+            throw new ResourceNotFoundException("Invalid installment data");
+        }
+
+        Loan loan = firstInstallment.getLoan();
+        if (loan == null) {
+            throw new ResourceNotFoundException("Loan not found for installment");
+        }
+    }
+
+    private void validatePaymentProcessed(int installmentsPaid) {
+        if (installmentsPaid == 0) {
+            throw new IllegalArgumentException("Payment amount is insufficient for any installment");
+        }
+    }
+
+    private void updatePaidInstallment(LoanInstallment installment) {
+        installment.setPaidAmount(installment.getAmount());
+        installment.setPaymentDate(LocalDate.now());
+        installment.setPaid(true);
+    }
+
+    private boolean checkIfLoanFullyPaid(Long loanId) {
+        return loanInstallmentRepository.countUnpaidInstallmentsByLoanId(loanId) == 0;
+    }
+
+    private void updateLoanAndCustomerStatus(Loan loan, boolean isFullyPaid) {
+        if (isFullyPaid) {
+            loan.setPaid(true);
+            loanRepository.save(loan);
+
+            Customer customer = loan.getCustomer();
+            customer.setUsedCreditLimit(customer.getUsedCreditLimit().subtract(loan.getLoanAmount()));
+            customerRepository.save(customer);
+        }
     }
 }
