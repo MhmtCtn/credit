@@ -37,14 +37,15 @@ public class LoanServiceImpl implements LoanService {
     public LoanDto createLoan(CreateLoanRequest request) {
 
         Customer customer = findAndValidateCustomer(request.customerId());
-        BigDecimal totalAmount = calculateTotalLoanAmount(request.amount(), request.interestRate());
-        validateCustomerCreditLimit(customer, totalAmount);
+        validateCustomerCreditLimit(customer, request.amount());
 
         Loan loan = createAndSaveLoan(customer, request);
 
+        BigDecimal totalAmount = calculateTotalLoanAmount(request.amount(), request.interestRate());
+
         createAndSaveInstallments(loan, totalAmount, request.numberOfInstallments());
 
-        updateCustomerCreditLimit(customer, totalAmount);
+        updateCustomerCreditLimit(customer, request.amount());
 
         return LoanDto.mapLoanToDto(loan);
     }
